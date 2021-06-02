@@ -45,7 +45,7 @@ typedef struct screen_change_data_s {
   unsigned char message_type;
   unsigned char screen; // TBD
 } screen_change_data_t;
-/****************** iDefinitions shared with display, make sure to keep in sync *****************/
+/****************** Definitions shared with display, make sure to keep in sync *****************/
 #define SERIAL_ON
 
 #ifdef SERIAL_ON
@@ -96,7 +96,7 @@ static void serial_init()
 #ifdef SERIAL_ON
   Serial.begin(115200);
   while(!Serial) {
-    delay(1); //Wait for serial port to connect. Needed for native USB port only
+    delay(1); 
   }
 #endif
 }
@@ -179,8 +179,7 @@ static void button_depressed_logic (int button_index) {
 
 
 void setup() {
-  setCpuFrequencyMhz(80);  //Lower the processor speed from default 240MHz to 80MHz
-
+  setCpuFrequencyMhz(80);  
   serial_init();
   
   pin_mode_init();
@@ -196,14 +195,11 @@ void loop() {
   int button_read = digitalRead(button_pins[cur_button_index]);
     
   if(HIGH == button_read) {
-    //trace("Button %d (pin %d) pressed\n", cur_button_index, button_pins[cur_button_index]);
     curr_button_state[cur_button_index] = 1;
     digitalWrite(LED_PIN, HIGH);
   } else {
-    //trace("Button %d (pin %d) released\n", cur_button_index, button_pins[cur_button_index]);
     curr_button_state[cur_button_index] = 0;
     if (1 == prev_button_state[cur_button_index]) { // negative edge, putton depressed
-      //trace("Button %d (pin %d) depressed\n", cur_button_index, button_pins[cur_button_index]);
       button_depressed_logic(cur_button_index);    
     }
     digitalWrite(LED_PIN, LOW);
