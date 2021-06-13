@@ -22,7 +22,7 @@
 uint8_t broadcastAddress[] = {0x24,0x0A,0xC4,0xF8,0xF9,0x08}; 
 
 /****************** Definitions shared with display, make sure to keep in sync *****************/
-// TODO - mode to a shared header file 
+// TODO - move to a shared header file 
 
 #define MAX_MESSAGE 250
 unsigned char out_message[MAX_MESSAGE];
@@ -43,7 +43,7 @@ typedef struct score_data_s {
 
 typedef struct screen_change_data_s {
   unsigned char message_type;
-  unsigned char screen; // TBD
+  unsigned char screen; 
 } screen_change_data_t;
 /****************** Definitions shared with display, make sure to keep in sync *****************/
 #define SERIAL_ON
@@ -179,7 +179,9 @@ static void button_depressed_logic (int button_index) {
 
 
 void setup() {
+
   setCpuFrequencyMhz(80);  
+
   serial_init();
   
   pin_mode_init();
