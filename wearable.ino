@@ -19,12 +19,14 @@
 
 
   
-uint8_t broadcastAddress[] = {0x24,0x0A,0xC4,0xF8,0xF9,0x08}; 
+//uint8_t broadcastAddress[] = {0x24,0x0A,0xC4,0xF8,0xF9,0x08}; 
 
+uint8_t broadcastAddress[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF}; 
 /****************** Definitions shared with display, make sure to keep in sync *****************/
-// TODO - move to a shared header file 
+// TODO - mode to a shared header file 
 
 #define MAX_MESSAGE 250
+unsigned char in_message[MAX_MESSAGE];
 unsigned char out_message[MAX_MESSAGE];
 
 enum message_type_e {
@@ -32,6 +34,8 @@ enum message_type_e {
     SCREEN_CHANGE,
     STEPS,
     HEART_RATE,
+    ACK,
+    NACK,
     /* Add new message types at the end */
 };
 
@@ -43,14 +47,17 @@ typedef struct score_data_s {
 
 typedef struct screen_change_data_s {
   unsigned char message_type;
-  unsigned char screen; 
+  unsigned char screen; // TBD
 } screen_change_data_t;
-/****************** Definitions shared with display, make sure to keep in sync *****************/
+/****************** iDefinitions shared with display, make sure to keep in sync *****************/
 #define SERIAL_ON
 
 #ifdef SERIAL_ON
 #define TRACE_ON
 #endif
+
+#define NUM_RETRIES  3
+#define ACK_TIMEOUT_MS 5
 
 #define LED_PIN      12
 #define BUTTON_1_PIN 13
@@ -64,6 +71,8 @@ enum button_index_e {
     SCREEN_CHANGE_BUTTON_IDX = 2,
     NUM_BUTTONS = 3
 };
+
+static bool ack_received = 0;
 
 int cur_button_index;
 
@@ -96,7 +105,7 @@ static void serial_init()
 #ifdef SERIAL_ON
   Serial.begin(115200);
   while(!Serial) {
-    delay(1); 
+    delay(1); //Wait for serial port to connect. Needed for native USB port only
   }
 #endif
 }
@@ -116,6 +125,18 @@ static void wifi_init()
   WiFi.setTxPower(WIFI_POWER_MINUS_1dBm); //Minimum WiFi RF power output ~ 120mA
 }
 
+void IRAM_ATTR OnDataRecv(const uint8_t * mac_addr, const uint8_t *incomingData, int len) {
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+           mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+  Serial.printf("Received from %s: ", macStr);
+  dump_message(incomingData, len);
+  unsigned char message_type = (unsigned char)*incomingData;
+  if (ACK == message_type) {
+    ack_received = true;
+  }
+}
+
 static void wireless_link_init()
 {
   wifi_init();
@@ -125,6 +146,7 @@ static void wireless_link_init()
   peerInfo.channel = 0;
   peerInfo.encrypt = false;
   esp_now_add_peer(&peerInfo);
+  esp_now_register_recv_cb(OnDataRecv);
   trace("\tESP-NOW should be up and running\n");
 }
 
@@ -151,6 +173,30 @@ static uint8_t encode_screen_change_packet(unsigned char screen)
   return len;
 }
 
+static void dump_message(const uint8_t *pData, int len)
+{
+  int i;
+  for (i=0; i<len; i++) {
+    Serial.printf("%02X ", pData[i]);   
+  }
+  Serial.printf("\n");
+}
+
+static void transmit_with_retries(uint8_t len)
+{
+  int i;
+  unsigned long start_time = 0;
+  ack_received = false;
+  for (i = 0; i < NUM_RETRIES && !ack_received; i++ ) {
+    esp_now_send(broadcastAddress, (uint8_t*)out_message, len);
+    start_time = millis();
+    while (millis() < start_time + ACK_TIMEOUT_MS) {
+      if (true == ack_received)
+        break;
+    }
+  }
+}
+  
 static void button_depressed_logic (int button_index) {
   uint8_t len;
   /*
@@ -164,23 +210,29 @@ static void button_depressed_logic (int button_index) {
     cur_score[player_index]++;
     trace("Reporting current score %d for player %d\n", cur_score[player_index], player_index);
     len = encode_score_packet(player_index, cur_score[player_index]);
-    esp_now_send(broadcastAddress, (uint8_t*)out_message, len);
+    Serial.printf("Sending: ");
+    dump_message(out_message, len);
+    //esp_now_send(broadcastAddress, (uint8_t*)out_message, len);
+    transmit_with_retries(len);
   } else
   if (SCREEN_CHANGE_BUTTON_IDX == button_index) {
-    screen_change_data_t screen_change_packet;
+    //screen_change_data_t screen_change_packet;
     cur_screen = (cur_screen + 1) % NUM_SCREENS;
     trace("Reporting screen change, current screen %d\n", cur_screen);
     len = encode_screen_change_packet(cur_screen);
-    esp_now_send(broadcastAddress, (uint8_t*)&screen_change_packet, sizeof(screen_change_data_t));    
+    Serial.printf("Sending: ");
+    dump_message(out_message, len);
+    //esp_now_send(broadcastAddress, (uint8_t*)out_message, len);    
+    transmit_with_retries(len);
   } else {
     trace("Non-existing button %d ?!!\n", button_index);
   }
 }
 
 
-void setup() {
 
-  setCpuFrequencyMhz(80);  
+void setup() {
+  setCpuFrequencyMhz(80);  //Lower the processor speed from default 240MHz to 80MHz
 
   serial_init();
   
@@ -197,11 +249,14 @@ void loop() {
   int button_read = digitalRead(button_pins[cur_button_index]);
     
   if(HIGH == button_read) {
+    //trace("Button %d (pin %d) pressed\n", cur_button_index, button_pins[cur_button_index]);
     curr_button_state[cur_button_index] = 1;
     digitalWrite(LED_PIN, HIGH);
   } else {
+    //trace("Button %d (pin %d) released\n", cur_button_index, button_pins[cur_button_index]);
     curr_button_state[cur_button_index] = 0;
     if (1 == prev_button_state[cur_button_index]) { // negative edge, putton depressed
+      //trace("Button %d (pin %d) depressed\n", cur_button_index, button_pins[cur_button_index]);
       button_depressed_logic(cur_button_index);    
     }
     digitalWrite(LED_PIN, LOW);
